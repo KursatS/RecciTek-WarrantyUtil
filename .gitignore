@@ -4,6 +4,9 @@ dist/
 *.exe
 *.spec
 
+# Installer scripts
+*.iss
+
 # Python
 __pycache__/
 *.py[cod]
