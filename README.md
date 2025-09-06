@@ -45,7 +45,7 @@ Bu proje özel kullanım içindir.
 
 ## İletişim
 
-Sorularınız için [GitHub Issues](https://github.com/kullanici-adi/repo-adi/issues) kullanabilirsiniz.
+Sorularınız için [GitHub Issues](https://github.com/KursatS/RecciTek-WarrantyUtil/issues) kullanabilirsiniz.
 
 ---
 
