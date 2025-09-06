@@ -12,18 +12,11 @@ Garanti Takip Sistemi, Recci Teknoloji ve KVK API entegrasyonu ile çalışan bi
 - 🎨 Modern ve kullanıcı dostu arayüz
 - 📱 Sistem tepsisi uygulaması
 
-## Kurulum
-
-### Otomatik Kurulum (Önerilen)
-1. [Releases](https://github.com/kullanici-adi/repo-adi/releases) bölümünden en son `GarantiSetup.exe` dosyasını indirin
+### Kurulum 
+1. [Releases](https://github.com/KursatS/RecciTek-WarrantyUtil/releases/tag/v1.0.0) bölümünden en son `GarantiSetup.exe` dosyasını indirin
 2. İndirdiğiniz setup dosyasını çalıştırın
 3. Kurulum sihirbazını takip edin
 4. Uygulama otomatik olarak başlayacaktır
-
-### Manuel Kurulum
-1. [Releases](https://github.com/kullanici-adi/repo-adi/releases) bölümünden `GarantiV6.zip` dosyasını indirin
-2. Zip dosyasını açın
-3. `GarantiV6.exe` dosyasını çalıştırın
 
 ## Kullanım
 
@@ -52,7 +45,7 @@ Bu proje özel kullanım içindir.
 
 ## İletişim
 
-Sorularınız için [GitHub Issues](https://github.com/kullanici-adi/repo-adi/issues) kullanabilirsiniz.
+Sorularınız için [GitHub Issues](https://github.com/KursatS/RecciTek-WarrantyUtil/issues) kullanabilirsiniz.
 
 ---
 
