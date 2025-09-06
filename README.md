@@ -25,6 +25,13 @@ Garanti Takip Sistemi, Recci Teknoloji ve KVK API entegrasyonu ile çalışan bi
 3. Seri numarası otomatik olarak algılanacak ve sorgulanacaktır
 4. Sonuç popup olarak görüntülenecektir
 
+## Test İçin Seri Numarası Örnekleri
+1.RCFVBY51104319 RECCI GARANTİ
+2.RCFVBY51101472 RECCI GARANTİ AMA SİSTEM DIŞI
+3.R28EBD30300475 HİÇBİR SİSTEMDE GARANTİSİ YOK
+4.R58EBR33904312 KVK GARANTİ
+
+
 ### Seri Numarası Formatı
 - R ile başlayan 14 karakterlik seri numaraları desteklenir
 - Örnek: `R1234567890123`
