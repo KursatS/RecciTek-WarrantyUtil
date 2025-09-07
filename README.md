@@ -13,7 +13,7 @@ Garanti Takip Sistemi, Recci Teknoloji ve KVK API entegrasyonu ile çalışan bi
 - 📱 Sistem tepsisi uygulaması
 
 ### Kurulum 
-1. [Releases](https://github.com/KursatS/RecciTek-WarrantyUtil/releases/tag/v1.0.0) bölümünden en son `GarantiSetup.exe` dosyasını indirin
+1. [Releases](https://github.com/KursatS/RecciTek-WarrantyUtil/releases/) bölümünden en son `GarantiSetup.exe` dosyasını indirin
 2. İndirdiğiniz setup dosyasını çalıştırın
 3. Kurulum sihirbazını takip edin
 4. Uygulama otomatik olarak başlayacaktır
