@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-# garanti_tepsi.py
-# Garanti Takip Sistemi - Recci Teknoloji + KVK Entegrasyon
-#
-# Özellikler:
-# - Sistem tepsisi arkaplan uygulaması
-# - R ile başlayan 14 karakterlik seri numarası filtreleme
-# - Recci Teknoloji garanti sorgusu (Yeşil popup)
-# - KVK API garanti sorgusu (Recci dışı ise, Mavi popup)
-# - Garanti dışı ürünler için genel hata/bilgi (Kırmızı popup)
-# - Model/Renk kopyalama özelliği
-# - KVK garanti bitiş tarihi kopyalama özelliği
-#
-# Gereksinimler:
-# pip install PyQt6 requests beautifulsoup4
-#
+
 import sys
 import re
 import logging
@@ -74,8 +60,7 @@ class Popup(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        # Outer overlay (semi-transparent dark)
-        self.resize(380, 220) # Popup boyutunu 20px büyült
+        self.resize(380, 220)
         outer = QFrame(self)
         outer.setObjectName("outer")
         outer.setStyleSheet("""
@@ -83,7 +68,6 @@ class Popup(QWidget):
         """)
         outer.setGeometry(0, 0, self.width(), self.height())
 
-        # Inner colored bubble
         self.bubble = QFrame(outer)
         self.bubble.setObjectName("bubble")
         self.bubble.setStyleSheet("""
@@ -91,30 +75,24 @@ class Popup(QWidget):
         """)
         self.bubble.setGeometry(12, 12, self.width() - 24, self.height() - 24)
 
-        # Layouts
         vbox = QVBoxLayout()
         vbox.setContentsMargins(14, 12, 14, 12)
         vbox.setSpacing(8)
 
-        # Title (centered)
         self.title_label = QLabel("GARANTİ DURUMU")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setStyleSheet("font-weight:700; font-size:14px; color: white;")
 
-        # Serial Label (centered)
         self.serial_label = QLabel("")
         self.serial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.serial_label.setStyleSheet("font-weight: bold; font-size:12px; color: #ffffff99;")
-        self.serial_label.setVisible(False) # Başlangıçta gizli
+        self.serial_label.setVisible(False)
 
-        # Info (centered)
         self.info_label = QLabel("")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("font-weight: bold; font-size:13px; color: #ffffffdd;")
 
-        # KVK linki kaldırıldı, yerine butonlar eklendi
-        # Copy Model button
         self.copy_model_btn = QPushButton("Modeli Kopyala")
         self.copy_model_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_model_btn.setFixedHeight(30)
@@ -134,7 +112,6 @@ class Popup(QWidget):
         self.copy_model_btn.clicked.connect(self._on_copy_model)
         self.copy_model_btn.setVisible(False)
 
-        # Copy Date button (for KVK)
         self.copy_date_btn = QPushButton("Tarihi Kopyala")
         self.copy_date_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_date_btn.setFixedHeight(30)
@@ -154,7 +131,6 @@ class Popup(QWidget):
         self.copy_date_btn.clicked.connect(self._on_copy_date)
         self.copy_date_btn.setVisible(False)
 
-        # Horizontal layout for buttons
         hbtn_layout = QHBoxLayout()
         hbtn_layout.setContentsMargins(0,0,0,0)
         hbtn_layout.setSpacing(10)
@@ -163,15 +139,13 @@ class Popup(QWidget):
         hbtn_layout.addWidget(self.copy_date_btn)
         hbtn_layout.addStretch(1)
 
-
         vbox.addWidget(self.title_label)
-        vbox.addWidget(self.serial_label) # Seri numarasını ekle
+        vbox.addWidget(self.serial_label)
         vbox.addWidget(self.info_label)
-        vbox.addLayout(hbtn_layout) # Butonları ekle
+        vbox.addLayout(hbtn_layout)
 
         self.bubble.setLayout(vbox)
 
-        # Close button
         self.close_btn = QPushButton("×", self.bubble)
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.setFixedSize(24, 24)
@@ -190,8 +164,7 @@ class Popup(QWidget):
             }
         """)
         self.close_btn.clicked.connect(self.close_popup)
-        
-        # Position the close button
+
         close_btn_x = self.bubble.width() - self.close_btn.width() - 5
         close_btn_y = 5
         self.close_btn.move(close_btn_x, close_btn_y)
@@ -240,24 +213,23 @@ class Popup(QWidget):
 
     def set_content(self, title: str, info: str, copy_model_payload: str = None, copy_date_payload: str = None, status_color: str = "red", serial: str = None):
         try:
-            # Set colors based on status_color
             if status_color == "green":
                 if title == "GARANTİ TAKİP SİSTEMİ BAŞLATILDI.":
-                    bubble_color = "rgba(75,0,130,255)"  # koyu mor
+                    bubble_color = "rgba(75,0,130,255)"
                     title_text = "GARANTİ TAKİP SİSTEMİ BAŞLATILDI."
                 else:
-                    bubble_color = "rgba(22,163,74,255)"  # green
+                    bubble_color = "rgba(22,163,74,255)"
                     title_text = "RECCI GARANTİLİ"
             elif status_color == "blue":
-                bubble_color = "rgba(59,130,246,255)"  # blue (KVK için)
+                bubble_color = "rgba(59,130,246,255)"
                 title_text = "KVK GARANTİLİ"
-            else: # red or error
-                bubble_color = "rgba(220,38,38,255)"  # red
+            else:
+                bubble_color = "rgba(220,38,38,255)"
                 title_text = "GARANTİ DIŞI" if title == "" else title
 
             self.bubble.setStyleSheet(f"QFrame#bubble {{ background-color: {bubble_color}; border-radius: 10px; }}")
             self.title_label.setText(title_text)
-            
+
             if serial:
                 self.serial_label.setText(f"Seri No: {serial}")
                 self.serial_label.setVisible(True)
@@ -268,15 +240,14 @@ class Popup(QWidget):
             self.copy_model_payload = copy_model_payload
             self.copy_date_payload = copy_date_payload
             self.current_serial = serial
-            
+
             self.copy_model_btn.setVisible(bool(copy_model_payload))
             self.copy_date_btn.setVisible(bool(copy_date_payload))
 
-            # Hide popup if no meaningful content
             if not info and not copy_model_payload and not copy_date_payload:
-                 self.hide() # popupı gizle
+                 self.hide()
             else:
-                self.show_at_bottom_right() # içerik varsa göster
+                self.show_at_bottom_right()
 
         except Exception as e:
             log_exc("set_content error: " + str(e))
@@ -376,7 +347,6 @@ class GarantiTrayApp(QtCore.QObject):
             text = self.clipboard.text().strip()
             if not text:
                 return
-            # Split by whitespace and punctuation, find first serial-like token
             token = None
             for part in re.split(r"\s+|[,;]", text):
                 if SERIAL_REGEX.fullmatch(part):
@@ -384,12 +354,10 @@ class GarantiTrayApp(QtCore.QObject):
                     break
             if not token:
                 return
-            # debounce: same serial repeated -> ignore
             if token == self._last_serial:
                 return
             self._last_serial = token
             log_info(f"Detected serial in clipboard: {token}")
-            # Run check in background thread to avoid blocking UI
             QtCore.QTimer.singleShot(100, lambda: self.check_warranty(token))
         except Exception as e:
             log_exc("Clipboard handler error: " + str(e))
@@ -414,7 +382,6 @@ class GarantiTrayApp(QtCore.QObject):
                     recci_in_warranty = True
             
             if recci_in_warranty:
-                # Extract Marka/Model/Renk robustly
                 def extract_label_value(soup, label_names):
                     for lab in label_names:
                         el = soup.find(lambda tag: tag.name == "div" and tag.get_text(strip=True).lower() == lab.lower())
@@ -503,19 +470,17 @@ class GarantiTrayApp(QtCore.QObject):
                     warranty_end = device_data.get("WARRANTYEND", "")
 
                     if description and "no data found" not in description.lower():
-                        # Remove "ROBOROCK" and "ROBOT SÜPÜRGE" case-insensitively for copying
                         modified_description = re.sub(r'ROBOROCK', '', description, flags=re.IGNORECASE)
                         modified_description = re.sub(r'ROBOT SÜPÜRGE', '', modified_description, flags=re.IGNORECASE)
-                        modified_description = re.sub(r'\s+', ' ', modified_description).strip() # Clean up extra spaces
-                        
-                        # Apply new formatting for copy_model_payload
+                        modified_description = re.sub(r'\s+', ' ', modified_description).strip()
+
                         formatted_copy_model_payload = None
                         if modified_description:
-                            parts = modified_description.rsplit(' ', 1) # Split by the last space
+                            parts = modified_description.rsplit(' ', 1)
                             if len(parts) == 2:
                                 formatted_copy_model_payload = f"{parts[0].upper()} - {parts[1].upper()}"
                             else:
-                                formatted_copy_model_payload = modified_description.upper() # Fallback if no space or single word
+                                formatted_copy_model_payload = modified_description.upper()
                         
                         display_text = f"{description}\nBitiş: {warranty_end}"
                         self.popup.set_content("", display_text, copy_model_payload=formatted_copy_model_payload, copy_date_payload=warranty_end, status_color="blue", serial=serial)
@@ -551,7 +516,6 @@ class GarantiTrayApp(QtCore.QObject):
             log_exc(f"Genel hata {serial}: {e}")
             self.popup.set_content("HATA", f"Beklenmeyen bir hata oluştu: {str(e)}", status_color="red", serial=serial)
 
-# main fonksiyonunu sınıfın dışına taşıdık.
 def main():
     try:
         app = QApplication(sys.argv)
@@ -560,7 +524,7 @@ def main():
 
         # Başlangıç popup'ı göster
         start_popup = Popup()
-        start_popup.set_content("GARANTİ TAKİP SİSTEMİ BAŞLATILDI.", "Developed by KURSAT SINAN", status_color="green")
+        start_popup.set_content("GARANTİ TAKİP SİSTEMİ BAŞLATILDI.", "Geliştirici: KURSAT SINAN", status_color="green")
         QTimer.singleShot(1000, lambda: start_popup.show_at_bottom_right())
 
         sys.exit(app.exec())
