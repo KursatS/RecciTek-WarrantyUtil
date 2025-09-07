@@ -3,36 +3,27 @@
 import sys
 import re
 import logging
-import webbrowser
-from datetime import datetime
-from pathlib import Path
-from typing import Optional, Tuple
-
 import requests
 from bs4 import BeautifulSoup
 import urllib3
 
-# SSL uyarılarını bastır
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QIcon, QPixmap, QAction
-from PyQt6.QtWidgets import (
-    QApplication, QSystemTrayIcon, QMenu,
-    QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QFrame
-)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
-# Ayarlar
+from modernUi import ModernPopup
+from classicUi import ClassicPopup
+
 RECCI_BASE = "https://garantibelgesi.recciteknoloji.com/sorgu/"
 KVK_API = "https://guvencesorgula.kvkteknikservis.com/api/device-data?imeiNo="
 SERIAL_REGEX = re.compile(r"^R[A-Za-z0-9]{13}$")
-LOG_FILE = Path.home() / "garanti.log"
 
-# Logging
 logging.basicConfig(
     level=logging.INFO,
-    filename=str(LOG_FILE),
+    filename="garanti.log",
     filemode="a",
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
@@ -45,247 +36,16 @@ def log_exc(msg: str):
     logger.exception(msg)
 
 
-class Popup(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setObjectName("main_popup")
-        self.copy_model_payload = None
-        self.copy_date_payload = None
-        self.current_serial = None
-
-        self._build_ui()
-
-    def _build_ui(self):
-        self.resize(380, 220)
-        outer = QFrame(self)
-        outer.setObjectName("outer")
-        outer.setStyleSheet("""
-            QFrame#outer { background-color: rgba(0,0,0,160); border-radius: 12px; }
-        """)
-        outer.setGeometry(0, 0, self.width(), self.height())
-
-        self.bubble = QFrame(outer)
-        self.bubble.setObjectName("bubble")
-        self.bubble.setStyleSheet("""
-            QFrame#bubble { background-color: rgba(22,163,74,255); border-radius: 10px; }
-        """)
-        self.bubble.setGeometry(12, 12, self.width() - 24, self.height() - 24)
-
-        vbox = QVBoxLayout()
-        vbox.setContentsMargins(14, 12, 14, 12)
-        vbox.setSpacing(8)
-
-        self.title_label = QLabel("GARANTİ DURUMU")
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet("font-weight:700; font-size:14px; color: white;")
-
-        self.serial_label = QLabel("")
-        self.serial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.serial_label.setStyleSheet("font-weight: bold; font-size:12px; color: #ffffff99;")
-        self.serial_label.setVisible(False)
-
-        self.info_label = QLabel("")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("font-weight: bold; font-size:13px; color: #ffffffdd;")
-
-        self.copy_model_btn = QPushButton("Modeli Kopyala")
-        self.copy_model_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_model_btn.setFixedHeight(30)
-        self.copy_model_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #111111;
-                color: #ffffff;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-weight:600;
-            }
-            QPushButton:hover {
-                background-color: #222222;
-            }
-        """)
-        self.copy_model_btn.clicked.connect(self._on_copy_model)
-        self.copy_model_btn.setVisible(False)
-
-        self.copy_date_btn = QPushButton("Tarihi Kopyala")
-        self.copy_date_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_date_btn.setFixedHeight(30)
-        self.copy_date_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #111111;
-                color: #ffffff;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-weight:600;
-            }
-            QPushButton:hover {
-                background-color: #222222;
-            }
-        """)
-        self.copy_date_btn.clicked.connect(self._on_copy_date)
-        self.copy_date_btn.setVisible(False)
-
-        hbtn_layout = QHBoxLayout()
-        hbtn_layout.setContentsMargins(0,0,0,0)
-        hbtn_layout.setSpacing(10)
-        hbtn_layout.addStretch(1)
-        hbtn_layout.addWidget(self.copy_model_btn)
-        hbtn_layout.addWidget(self.copy_date_btn)
-        hbtn_layout.addStretch(1)
-
-        vbox.addWidget(self.title_label)
-        vbox.addWidget(self.serial_label)
-        vbox.addWidget(self.info_label)
-        vbox.addLayout(hbtn_layout)
-
-        self.bubble.setLayout(vbox)
-
-        self.close_btn = QPushButton("×", self.bubble)
-        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_btn.setFixedSize(24, 24)
-        self.close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #ffffff;
-                font-size: 22px;
-                font-weight: bold;
-                border: none;
-                border-radius: 12px;
-                padding-bottom: 4px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 40);
-            }
-        """)
-        self.close_btn.clicked.connect(self.close_popup)
-
-        close_btn_x = self.bubble.width() - self.close_btn.width() - 5
-        close_btn_y = 5
-        self.close_btn.move(close_btn_x, close_btn_y)
-
-        self.autoclose_timer = QTimer(self)
-        self.autoclose_timer.setInterval(7000)  # 7 saniye
-        self.autoclose_timer.timeout.connect(self.close_popup)
-
-    def _on_copy_model(self):
-        try:
-            if self.copy_model_payload:
-                QApplication.clipboard().setText(self.copy_model_payload)
-                log_info(f"Copied model to clipboard: {self.copy_model_payload}")
-        except Exception as e:
-            log_exc("Copy model failed: " + str(e))
-
-    def _on_copy_date(self):
-        try:
-            if self.copy_date_payload:
-                QApplication.clipboard().setText(self.copy_date_payload)
-                log_info(f"Copied date to clipboard: {self.copy_date_payload}")
-        except Exception as e:
-            log_exc("Copy date failed: " + str(e))
-
-    def close_popup(self):
-        try:
-            self.hide()
-            self.autoclose_timer.stop()
-        except Exception as e:
-            log_exc("Popup close error: " + str(e))
-
-    def show_at_bottom_right(self):
-        try:
-            screen = QApplication.primaryScreen()
-            geo = screen.availableGeometry()
-            self.adjustSize()
-            w = self.width()
-            h = self.height()
-            x = geo.right() - w - 20
-            y = geo.bottom() - h - 20
-            self.move(x, y)
-            self.show()
-            self.autoclose_timer.start()
-        except Exception as e:
-            log_exc("Show popup error: " + str(e))
-
-    def set_content(self, title: str, info: str, copy_model_payload: str = None, copy_date_payload: str = None, status_color: str = "red", serial: str = None):
-        try:
-            if status_color == "green":
-                if title == "GARANTİ TAKİP SİSTEMİ BAŞLATILDI.":
-                    bubble_color = "rgba(75,0,130,255)"
-                    title_text = "GARANTİ TAKİP SİSTEMİ BAŞLATILDI."
-                else:
-                    bubble_color = "rgba(22,163,74,255)"
-                    title_text = "RECCI GARANTİLİ"
-            elif status_color == "blue":
-                bubble_color = "rgba(59,130,246,255)"
-                title_text = "KVK GARANTİLİ"
-            else:
-                bubble_color = "rgba(220,38,38,255)"
-                title_text = "GARANTİ DIŞI" if title == "" else title
-
-            self.bubble.setStyleSheet(f"QFrame#bubble {{ background-color: {bubble_color}; border-radius: 10px; }}")
-            self.title_label.setText(title_text)
-
-            if serial:
-                self.serial_label.setText(f"Seri No: {serial}")
-                self.serial_label.setVisible(True)
-            else:
-                self.serial_label.setVisible(False)
-
-            self.info_label.setText(info)
-            self.copy_model_payload = copy_model_payload
-            self.copy_date_payload = copy_date_payload
-            self.current_serial = serial
-
-            self.copy_model_btn.setVisible(bool(copy_model_payload))
-            self.copy_date_btn.setVisible(bool(copy_date_payload))
-
-            if not info and not copy_model_payload and not copy_date_payload:
-                 self.hide()
-            else:
-                self.show_at_bottom_right()
-
-        except Exception as e:
-            log_exc("set_content error: " + str(e))
-
-
 class GarantiTrayApp(QtCore.QObject):
     def __init__(self, app: QApplication):
         super().__init__()
         self.app = app
-        
+
         # Icon ayarla
-        icon_path = None
-        try:
-            # PyInstaller exe içindeki dosyalar için
-            if hasattr(sys, '_MEIPASS'):
-                base_path = Path(sys._MEIPASS)
-            else:
-                base_path = Path.cwd()
-
-            ico_path = base_path / "logo.ico"
-            png_path = base_path / "logo.png"
-
-            if ico_path.exists():
-                icon_path = ico_path
-            elif png_path.exists():
-                icon_path = png_path
-
-            if icon_path:
-                self.tray_icon = QSystemTrayIcon(QIcon(str(icon_path)))
-            else:
-                self.tray_icon = QSystemTrayIcon(QIcon())
-        except Exception as e:
-            log_exc(f"Icon yükleme hatası: {e}")
-            self.tray_icon = QSystemTrayIcon(QIcon())
-            
+        self.tray_icon = QSystemTrayIcon(QIcon("logo.ico"))
         self.tray_icon.setToolTip("Garanti Takip Sistemi")
-        
-        # Menü oluştur - Windows koyu tema uyumlu
+
+        # Menü oluştur
         self.menu = QMenu()
         self.menu.setStyleSheet("""
             QMenu {
@@ -308,16 +68,32 @@ class GarantiTrayApp(QtCore.QObject):
                 background-color: #094771;
             }
         """)
-        
+
+        # Arayüz menüsü
+        interface_menu = self.menu.addMenu("Arayüz")
+
+        # Modern arayüz seçeneği
+        modern_action = QAction("Modern", self)
+        modern_action.triggered.connect(lambda: self.change_interface("modern"))
+        interface_menu.addAction(modern_action)
+
+        # Klasik arayüz seçeneği
+        classic_action = QAction("Klasik", self)
+        classic_action.triggered.connect(lambda: self.change_interface("classic"))
+        interface_menu.addAction(classic_action)
+
+        # Ayırıcı çizgi
+        self.menu.addSeparator()
+
         # Çıkış butonu
         exit_action = QAction("Çıkış", self)
         exit_action.triggered.connect(self.quit)
         self.menu.addAction(exit_action)
-        
+
         # Menüyü tray icon'a bağla
         self.tray_icon.setContextMenu(self.menu)
 
-        # Tray icon görünürlüğünü sağlamak için
+        # Tray icon görünürlüğünü sağla
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray_icon.setVisible(True)
             self.tray_icon.show()
@@ -326,18 +102,52 @@ class GarantiTrayApp(QtCore.QObject):
             QTimer.singleShot(500, lambda: self.tray_icon.show())
             QTimer.singleShot(1500, lambda: self.tray_icon.show())
             QTimer.singleShot(3000, lambda: self.tray_icon.show())
-        else:
-            log_info("System tray mevcut değil")
 
-        self.popup = Popup()
+        # Arayüz seçimi (varsayılan: modern)
+        self.current_interface = "modern"
+        self.current_popup = None
 
+        # Clipboard izleme
         self.clipboard = QApplication.clipboard()
         self.clipboard.dataChanged.connect(self.on_clipboard_change)
         self._last_serial = None
 
+    def change_interface(self, interface_type):
+        """Arayüzü değiştir"""
+        try:
+            old_interface = self.current_interface
+            self.current_interface = interface_type
+            log_info(f"Arayüz değiştirildi: {old_interface} → {interface_type}")
+
+            # Mevcut popup varsa kapat
+            if self.current_popup and hasattr(self.current_popup, 'isVisible') and self.current_popup.isVisible():
+                self.current_popup.close_popup()
+
+        except Exception as e:
+            log_exc(f"Arayüz değiştirme hatası: {e}")
+
+    def show_popup(self, title: str, info: str, copy_model_payload: str = None, copy_date_payload: str = None, status_color: str = "red", serial: str = None):
+        """Seçili arayüze göre popup göster"""
+        try:
+            # Mevcut popup varsa kapat
+            if self.current_popup and hasattr(self.current_popup, 'isVisible') and self.current_popup.isVisible():
+                self.current_popup.close_popup()
+
+            # Yeni popup oluştur
+            if self.current_interface == "modern":
+                self.current_popup = ModernPopup()
+            else:  # classic
+                self.current_popup = ClassicPopup()
+
+            # Popup içeriğini ayarla
+            self.current_popup.set_content(title, info, copy_model_payload, copy_date_payload, status_color, serial)
+
+        except Exception as e:
+            log_exc(f"Popup gösterme hatası: {e}")
+
     def quit(self):
         try:
-            log_info("Uygulama kapatılıyor (Çıkış menüsü).")
+            log_info("Uygulama kapatılıyor.")
             QtCore.QCoreApplication.quit()
         except Exception as e:
             log_exc("Quit error: " + str(e))
@@ -380,7 +190,7 @@ class GarantiTrayApp(QtCore.QObject):
                 badge = soup.find("div", class_=lambda v: v and "bg-emerald-100" in v)
                 if badge:
                     recci_in_warranty = True
-            
+
             if recci_in_warranty:
                 def extract_label_value(soup, label_names):
                     for lab in label_names:
@@ -420,25 +230,22 @@ class GarantiTrayApp(QtCore.QObject):
                     display_text = " - ".join(display_parts) if display_parts else "Recci bilgisi bulunamadı."
                     copy_model_payload = " - ".join([p for p in [model_up, color_up] if p]) or None
 
-
-
-                self.popup.set_content("", display_text, copy_model_payload=copy_model_payload, copy_date_payload=None, status_color="green", serial=serial)
+                self.show_popup("", display_text, copy_model_payload=copy_model_payload, copy_date_payload=None, status_color="green", serial=serial)
                 log_info(f"Recci garantili: {serial} | {display_text}")
-                return # Recci'de bulunduysa KVK'ya bakmaya gerek yok
+                return
 
-            # Özel seri kontrolü (sadece Recci'de bulunamazsa)
             if serial.startswith("RCCVBY") or serial.startswith("RCFVBY"):
-                self.popup.set_content("", "MODEL BULUNAMADI. LÜTFEN CİHAZ ÜZERİNDEN ÖĞRENİNİZ.", status_color="green", serial=serial)
+                self.show_popup("", "MODEL BULUNAMADI. LÜTFEN CİHAZ ÜZERİNDEN ÖĞRENİNİZ.", status_color="green", serial=serial)
                 log_info(f"Özel seri garantili: {serial}")
                 return
 
-            # 2. Recci'de bulunamazsa KVK API kontrolü (curl ile)
+            # 2. KVK API kontrolü
+            kvk_no_data = False
             try:
                 kvk_api_url = KVK_API + serial
                 import subprocess
                 import json
 
-                # Windows'ta komut penceresinin açılmasını engellemek için
                 startupinfo = None
                 if sys.platform == "win32":
                     startupinfo = subprocess.STARTUPINFO()
@@ -446,75 +253,78 @@ class GarantiTrayApp(QtCore.QObject):
 
                 command = [
                     "curl",
-                    "-s",  # Sessiz mod
-                    "-L",  # Yönlendirmeleri takip et
-                    "--tlsv1.2", # TLS 1.2'yi zorla
-                    "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "-s", "-L", "--tlsv1.2",
+                    "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                     kvk_api_url
                 ]
-                
+
                 result = subprocess.run(
-                    command, 
-                    capture_output=True, 
-                    text=True, 
-                    encoding='utf-8', # Türkçe karakterler için
-                    timeout=15, 
-                    check=True,
-                    startupinfo=startupinfo
+                    command, capture_output=True, text=True, encoding='utf-8',
+                    timeout=15, check=True, startupinfo=startupinfo
                 )
                 kvk_data = json.loads(result.stdout)
 
-                if kvk_data.get("IsSucceeded") == 1 and kvk_data.get("ResultData"):
-                    device_data = kvk_data["ResultData"][0]
-                    description = device_data.get("DESCRIPTION", "")
-                    warranty_end = device_data.get("WARRANTYEND", "")
+                # KVK'da veri var mı kontrol et
+                if kvk_data.get("IsSucceeded") == 1:
+                    result_data = kvk_data.get("ResultData")
+                    if result_data and isinstance(result_data, list) and len(result_data) > 0:
+                        device_data = result_data[0]
+                        description = device_data.get("DESCRIPTION", "")
+                        warranty_end = device_data.get("WARRANTYEND", "")
 
-                    if description and "no data found" not in description.lower():
-                        modified_description = re.sub(r'ROBOROCK', '', description, flags=re.IGNORECASE)
-                        modified_description = re.sub(r'ROBOT SÜPÜRGE', '', modified_description, flags=re.IGNORECASE)
-                        modified_description = re.sub(r'\s+', ' ', modified_description).strip()
+                        if description and "no data found" not in description.lower():
+                            # KVK'da garanti bulundu
+                            modified_description = re.sub(r'ROBOROCK', '', description, flags=re.IGNORECASE)
+                            modified_description = re.sub(r'ROBOT SÜPÜRGE', '', modified_description, flags=re.IGNORECASE)
+                            modified_description = re.sub(r'\s+', ' ', modified_description).strip()
 
-                        formatted_copy_model_payload = None
-                        if modified_description:
-                            parts = modified_description.rsplit(' ', 1)
-                            if len(parts) == 2:
-                                formatted_copy_model_payload = f"{parts[0].upper()} - {parts[1].upper()}"
-                            else:
-                                formatted_copy_model_payload = modified_description.upper()
-                        
-                        display_text = f"{description}\nBitiş: {warranty_end}"
-                        self.popup.set_content("", display_text, copy_model_payload=formatted_copy_model_payload, copy_date_payload=warranty_end, status_color="blue", serial=serial)
-                        log_info(f"KVK garantili (curl): {serial} | {formatted_copy_model_payload} | Bitiş: {warranty_end}")
-                        return
+                            formatted_copy_model_payload = None
+                            if modified_description:
+                                parts = modified_description.rsplit(' ', 1)
+                                if len(parts) == 2:
+                                    formatted_copy_model_payload = f"{parts[0].upper()} - {parts[1].upper()}"
+                                else:
+                                    formatted_copy_model_payload = modified_description.upper()
+
+                            display_text = f"{description}\nBitiş: {warranty_end}"
+                            self.show_popup("", display_text, copy_model_payload=formatted_copy_model_payload, copy_date_payload=warranty_end, status_color="blue", serial=serial)
+                            log_info(f"KVK garantili: {serial} | {formatted_copy_model_payload} | Bitiş: {warranty_end}")
+                            return
+                        else:
+                            # KVK'da "no data found" var
+                            kvk_no_data = True
+                    else:
+                        # KVK'da ResultData boş veya liste değil
+                        kvk_no_data = True
+                else:
+                    # KVK başarısız
+                    kvk_no_data = True
 
             except FileNotFoundError:
-                log_exc("curl komutu bulunamadı.")
-                self.popup.set_content("HATA", "curl komutu sistemde bulunamadı.", status_color="red", serial=serial)
+                self.show_popup("HATA", "curl komutu sistemde bulunamadı.", status_color="red", serial=serial)
                 return
             except subprocess.TimeoutExpired:
-                log_exc(f"KVK curl zaman aşımı {serial}")
-                self.popup.set_content("", "KVK sorgusu (curl) zaman aşımına uğradı.", status_color="red", serial=serial)
+                self.show_popup("", "KVK sorgusu zaman aşımına uğradı.", status_color="red", serial=serial)
                 return
             except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-                log_exc(f"KVK curl/JSON hatası {serial}: {e}")
-                # Hata durumunda genel mesaja düşmesi için devam et
-            except Exception as kvk_e:
-                log_exc(f"KVK genel hata (curl) {serial}: {kvk_e}")
-                # Hata durumunda genel mesaja düşmesi için devam et
+                kvk_no_data = True
 
-            # 3. Ne Recci ne de KVK'da bulunamazsa
-            self.popup.set_content("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
-            log_info(f"Garanti dışı: {serial}")
+            # 3. Her iki sistemde de garanti bulunamadıysa
+            if kvk_no_data:
+                self.show_popup("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
+                log_info(f"Garanti dışı: {serial} (Recci ve KVK'da bulunamadı)")
+            else:
+                # Sadece Recci'de bulunamadı, KVK kontrol edilemedi
+                self.show_popup("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
+                log_info(f"Garanti dışı: {serial} (Recci'de bulunamadı, KVK kontrol edilemedi)")
 
         except requests.exceptions.Timeout:
-            log_exc(f"Sorgu zaman aşımına uğradı: {serial}")
-            self.popup.set_content("HATA", "Sorgu zaman aşımına uğradı.", status_color="red", serial=serial)
+            self.show_popup("HATA", "Sorgu zaman aşımına uğradı.", status_color="red", serial=serial)
         except requests.exceptions.RequestException as req_e:
-            log_exc(f"HTTP isteği hatası {serial}: {req_e}")
-            self.popup.set_content("HATA", f"Sorgu hatası: {str(req_e)}", status_color="red", serial=serial)
+            self.show_popup("HATA", f"Sorgu hatası: {str(req_e)}", status_color="red", serial=serial)
         except Exception as e:
-            log_exc(f"Genel hata {serial}: {e}")
-            self.popup.set_content("HATA", f"Beklenmeyen bir hata oluştu: {str(e)}", status_color="red", serial=serial)
+            self.show_popup("HATA", f"Beklenmeyen bir hata oluştu: {str(e)}", status_color="red", serial=serial)
+
 
 def main():
     try:
@@ -523,7 +333,7 @@ def main():
         log_info("Garanti tepsi uygulaması başlatıldı.")
 
         # Başlangıç popup'ı göster
-        start_popup = Popup()
+        start_popup = ModernPopup()
         start_popup.set_content("GARANTİ TAKİP SİSTEMİ BAŞLATILDI.", "Geliştirici: KURSAT SINAN", status_color="green")
         QTimer.singleShot(1000, lambda: start_popup.show_at_bottom_right())
 
