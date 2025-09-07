@@ -3,7 +3,12 @@
 import sys
 import re
 import logging
+import json
+import os
+from datetime import datetime, timedelta
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import urllib3
 
@@ -21,6 +26,17 @@ RECCI_BASE = "https://garantibelgesi.recciteknoloji.com/sorgu/"
 KVK_API = "https://guvencesorgula.kvkteknikservis.com/api/device-data?imeiNo="
 SERIAL_REGEX = re.compile(r"^R[A-Za-z0-9]{13}$")
 
+# Cache ayarları
+CACHE_FILE = "warranty_cache.json"
+CACHE_MAX_SIZE = 100
+CACHE_EXPIRY_HOURS = 168  # 1 hafta (7 gün)
+
+# HTTP ayarları
+MAX_RETRIES = 3
+BACKOFF_FACTOR = 0.3
+TIMEOUT_RECCI = 8
+TIMEOUT_KVK = 10
+
 logging.basicConfig(
     level=logging.INFO,
     filename="garanti.log",
@@ -34,6 +50,94 @@ def log_info(msg: str):
 
 def log_exc(msg: str):
     logger.exception(msg)
+
+def load_cache():
+    """Cache dosyasını yükle"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            # Süresi dolmuş kayıtları temizle
+            current_time = datetime.now()
+            expiry_time = timedelta(hours=CACHE_EXPIRY_HOURS)
+
+            valid_cache = {}
+            for serial, data in cache_data.items():
+                cache_time = datetime.fromisoformat(data['timestamp'])
+                if current_time - cache_time < expiry_time:
+                    valid_cache[serial] = data
+
+            return valid_cache
+    except Exception as e:
+        log_exc(f"Cache yükleme hatası: {e}")
+
+    return {}
+
+def save_cache(cache_data):
+    """Cache'i dosyaya kaydet"""
+    try:
+        # Cache boyutu kontrolü
+        if len(cache_data) > CACHE_MAX_SIZE:
+            # En eski kayıtları sil (LRU mantığı)
+            sorted_items = sorted(cache_data.items(),
+                                key=lambda x: x[1]['timestamp'])
+            cache_data = dict(sorted_items[-CACHE_MAX_SIZE:])
+
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log_exc(f"Cache kaydetme hatası: {e}")
+
+def get_cached_result(serial, cache_data):
+    """Cache'den sonuç al"""
+    if serial in cache_data:
+        data = cache_data[serial]
+        current_time = datetime.now()
+        cache_time = datetime.fromisoformat(data['timestamp'])
+        expiry_time = timedelta(hours=CACHE_EXPIRY_HOURS)
+
+        if current_time - cache_time < expiry_time:
+            log_info(f"Cache hit: {serial}")
+            return data
+
+        # Süresi dolmuş cache'i sil
+        del cache_data[serial]
+        save_cache(cache_data)
+
+    return None
+
+def add_to_cache(serial, result_data, cache_data):
+    """Cache'e yeni kayıt ekle"""
+    cache_data[serial] = {
+        'timestamp': datetime.now().isoformat(),
+        'result': result_data
+    }
+    save_cache(cache_data)
+    log_info(f"Cache'e eklendi: {serial}")
+
+def create_http_session():
+    """Optimize edilmiş HTTP session oluştur"""
+    session = requests.Session()
+
+    # Retry stratejisi
+    retry_strategy = Retry(
+        total=MAX_RETRIES,
+        backoff_factor=BACKOFF_FACTOR,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+
+    # Connection pooling adapter
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=10,
+        pool_maxsize=20
+    )
+
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    return session
 
 
 class GarantiTrayApp(QtCore.QObject):
@@ -174,12 +278,33 @@ class GarantiTrayApp(QtCore.QObject):
 
     def check_warranty(self, serial: str):
         try:
+            # Cache kontrolü
+            cache_data = load_cache()
+            cached_result = get_cached_result(serial, cache_data)
+
+            if cached_result:
+                # Cache'den sonuç var
+                result = cached_result['result']
+                self.show_popup(
+                    result.get('title', ''),
+                    result.get('info', ''),
+                    result.get('copy_model_payload'),
+                    result.get('copy_date_payload'),
+                    result.get('status_color', 'red'),
+                    serial
+                )
+                log_info(f"Cache'den sonuç gösterildi: {serial}")
+                return
+
             # 1. Recci kontrolü
             recci_url = RECCI_BASE + serial
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
-            recci_resp = requests.get(recci_url, headers=headers, timeout=12)
+
+            # Optimize edilmiş HTTP session kullan
+            session = create_http_session()
+            recci_resp = session.get(recci_url, headers=headers, timeout=TIMEOUT_RECCI)
             recci_resp.raise_for_status()
             soup = BeautifulSoup(recci_resp.text, "html.parser")
 
@@ -231,11 +356,33 @@ class GarantiTrayApp(QtCore.QObject):
                     copy_model_payload = " - ".join([p for p in [model_up, color_up] if p]) or None
 
                 self.show_popup("", display_text, copy_model_payload=copy_model_payload, copy_date_payload=None, status_color="green", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': '',
+                    'info': display_text,
+                    'copy_model_payload': copy_model_payload,
+                    'copy_date_payload': None,
+                    'status_color': 'green'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 log_info(f"Recci garantili: {serial} | {display_text}")
                 return
 
             if serial.startswith("RCCVBY") or serial.startswith("RCFVBY"):
                 self.show_popup("", "MODEL BULUNAMADI. LÜTFEN CİHAZ ÜZERİNDEN ÖĞRENİNİZ.", status_color="green", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': '',
+                    'info': "MODEL BULUNAMADI. LÜTFEN CİHAZ ÜZERİNDEN ÖĞRENİNİZ.",
+                    'copy_model_payload': None,
+                    'copy_date_payload': None,
+                    'status_color': 'green'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 log_info(f"Özel seri garantili: {serial}")
                 return
 
@@ -260,7 +407,7 @@ class GarantiTrayApp(QtCore.QObject):
 
                 result = subprocess.run(
                     command, capture_output=True, text=True, encoding='utf-8',
-                    timeout=15, check=True, startupinfo=startupinfo
+                    timeout=10, check=True, startupinfo=startupinfo
                 )
                 kvk_data = json.loads(result.stdout)
 
@@ -288,6 +435,17 @@ class GarantiTrayApp(QtCore.QObject):
 
                             display_text = f"{description}\nBitiş: {warranty_end}"
                             self.show_popup("", display_text, copy_model_payload=formatted_copy_model_payload, copy_date_payload=warranty_end, status_color="blue", serial=serial)
+
+                            # Cache'e kaydet
+                            result_data = {
+                                'title': '',
+                                'info': display_text,
+                                'copy_model_payload': formatted_copy_model_payload,
+                                'copy_date_payload': warranty_end,
+                                'status_color': 'blue'
+                            }
+                            add_to_cache(serial, result_data, cache_data)
+
                             log_info(f"KVK garantili: {serial} | {formatted_copy_model_payload} | Bitiş: {warranty_end}")
                             return
                         else:
@@ -302,9 +460,31 @@ class GarantiTrayApp(QtCore.QObject):
 
             except FileNotFoundError:
                 self.show_popup("HATA", "curl komutu sistemde bulunamadı.", status_color="red", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': 'HATA',
+                    'info': "curl komutu sistemde bulunamadı.",
+                    'copy_model_payload': None,
+                    'copy_date_payload': None,
+                    'status_color': 'red'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 return
             except subprocess.TimeoutExpired:
                 self.show_popup("", "KVK sorgusu zaman aşımına uğradı.", status_color="red", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': '',
+                    'info': "KVK sorgusu zaman aşımına uğradı.",
+                    'copy_model_payload': None,
+                    'copy_date_payload': None,
+                    'status_color': 'red'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 return
             except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
                 kvk_no_data = True
@@ -312,18 +492,72 @@ class GarantiTrayApp(QtCore.QObject):
             # 3. Her iki sistemde de garanti bulunamadıysa
             if kvk_no_data:
                 self.show_popup("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': '',
+                    'info': "Hiçbir sistemde garanti bilgisi bulunamadı.",
+                    'copy_model_payload': None,
+                    'copy_date_payload': None,
+                    'status_color': 'red'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 log_info(f"Garanti dışı: {serial} (Recci ve KVK'da bulunamadı)")
             else:
                 # Sadece Recci'de bulunamadı, KVK kontrol edilemedi
                 self.show_popup("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
+
+                # Cache'e kaydet
+                result_data = {
+                    'title': '',
+                    'info': "Hiçbir sistemde garanti bilgisi bulunamadı.",
+                    'copy_model_payload': None,
+                    'copy_date_payload': None,
+                    'status_color': 'red'
+                }
+                add_to_cache(serial, result_data, cache_data)
+
                 log_info(f"Garanti dışı: {serial} (Recci'de bulunamadı, KVK kontrol edilemedi)")
 
         except requests.exceptions.Timeout:
             self.show_popup("HATA", "Sorgu zaman aşımına uğradı.", status_color="red", serial=serial)
+
+            # Cache'e kaydet
+            result_data = {
+                'title': 'HATA',
+                'info': "Sorgu zaman aşımına uğradı.",
+                'copy_model_payload': None,
+                'copy_date_payload': None,
+                'status_color': 'red'
+            }
+            add_to_cache(serial, result_data, cache_data)
+
         except requests.exceptions.RequestException as req_e:
             self.show_popup("HATA", f"Sorgu hatası: {str(req_e)}", status_color="red", serial=serial)
+
+            # Cache'e kaydet
+            result_data = {
+                'title': 'HATA',
+                'info': f"Sorgu hatası: {str(req_e)}",
+                'copy_model_payload': None,
+                'copy_date_payload': None,
+                'status_color': 'red'
+            }
+            add_to_cache(serial, result_data, cache_data)
+
         except Exception as e:
             self.show_popup("HATA", f"Beklenmeyen bir hata oluştu: {str(e)}", status_color="red", serial=serial)
+
+            # Cache'e kaydet
+            result_data = {
+                'title': 'HATA',
+                'info': f"Beklenmeyen bir hata oluştu: {str(e)}",
+                'copy_model_payload': None,
+                'copy_date_payload': None,
+                'status_color': 'red'
+            }
+            add_to_cache(serial, result_data, cache_data)
 
 
 def main():
