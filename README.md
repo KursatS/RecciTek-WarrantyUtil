@@ -121,23 +121,6 @@ Uygulamayı test etmek için aşağıdaki seri numaralarını kullanabilirsiniz:
 - **Disk Alanı**: 100MB boş alan
 - **Ağ**: İnternet bağlantısı (API sorguları için)
 
-## Geliştirme
-
-### Proje Yapısı
-```
-RecciTek-WarrantyUtil/
-├── app.py                 # Ana uygulama dosyası
-├── modernUi.py           # Modern arayüz modülü
-├── classicUi.py          # Klasik arayüz modülü
-├── historyUi.py          # Geçmiş sorgular arayüzü
-├── device_notes.json     # Cihaz notları veritabanı
-├── warranty_cache.json   # Garanti önbelleği
-├── logo.ico             # Uygulama simgesi
-├── logo.png             # Logo dosyası
-├── installer.iss        # Inno Setup yükleyici betiği
-└── README.md            # Bu dosya
-```
-
 ### Katkıda Bulunma
 1. Bu depoyu fork edin
 2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
@@ -161,13 +144,6 @@ RecciTek-WarrantyUtil/
 **Önbellek sorunları:**
 - Sistem tepsisi menüsünden önbelleği temizleyin
 - Uygulamayı yeniden başlatın
-
-### Log Dosyaları
-Uygulama logları `%APPDATA%\RecciTek Warranty Util\logs\` klasöründe bulunur.
-
-## Lisans
-
-Bu proje MIT Lisansı altında lisanslanmıştır - detaylar için [LICENSE](LICENSE) dosyasına bakın.
 
 ## İletişim
 
