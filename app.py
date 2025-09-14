@@ -2,7 +2,6 @@
 
 import sys
 import re
-import logging
 import json
 import os
 from datetime import datetime, timedelta
@@ -21,35 +20,20 @@ from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
 from modernUi import ModernPopup
 from classicUi import ClassicPopup
+from historyUi import HistoryPopup
 
 RECCI_BASE = "https://garantibelgesi.recciteknoloji.com/sorgu/"
 KVK_API = "https://guvencesorgula.kvkteknikservis.com/api/device-data?imeiNo="
 SERIAL_REGEX = re.compile(r"^R[A-Za-z0-9]{13}$")
 
-# Cache ayarları
 CACHE_FILE = "warranty_cache.json"
 CACHE_MAX_SIZE = 100
-CACHE_EXPIRY_HOURS = 168  # 1 hafta (7 gün)
+CACHE_EXPIRY_HOURS = 168
 
-# HTTP ayarları
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 0.3
 TIMEOUT_RECCI = 8
 TIMEOUT_KVK = 10
-
-logging.basicConfig(
-    level=logging.INFO,
-    filename="garanti.log",
-    filemode="a",
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger("garanti")
-
-def log_info(msg: str):
-    logger.info(msg)
-
-def log_exc(msg: str):
-    logger.exception(msg)
 
 def load_cache():
     """Cache dosyasını yükle"""
@@ -69,8 +53,8 @@ def load_cache():
                     valid_cache[serial] = data
 
             return valid_cache
-    except Exception as e:
-        log_exc(f"Cache yükleme hatası: {e}")
+    except:
+        pass
 
     return {}
 
@@ -86,8 +70,8 @@ def save_cache(cache_data):
 
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        log_exc(f"Cache kaydetme hatası: {e}")
+    except:
+        pass
 
 def get_cached_result(serial, cache_data):
     """Cache'den sonuç al"""
@@ -98,7 +82,6 @@ def get_cached_result(serial, cache_data):
         expiry_time = timedelta(hours=CACHE_EXPIRY_HOURS)
 
         if current_time - cache_time < expiry_time:
-            log_info(f"Cache hit: {serial}")
             return data
 
         # Süresi dolmuş cache'i sil
@@ -114,7 +97,6 @@ def add_to_cache(serial, result_data, cache_data):
         'result': result_data
     }
     save_cache(cache_data)
-    log_info(f"Cache'e eklendi: {serial}")
 
 def create_http_session():
     """Optimize edilmiş HTTP session oluştur"""
@@ -138,6 +120,9 @@ def create_http_session():
     session.mount("https://", adapter)
 
     return session
+
+
+
 
 
 class GarantiTrayApp(QtCore.QObject):
@@ -189,6 +174,19 @@ class GarantiTrayApp(QtCore.QObject):
         # Ayırıcı çizgi
         self.menu.addSeparator()
 
+        # Geçmiş sorgular butonu
+        history_action = QAction("Geçmiş Sorgular", self)
+        history_action.triggered.connect(self.show_history)
+        self.menu.addAction(history_action)
+
+        # Cache temizleme butonu
+        clear_cache_action = QAction("Cache Temizle", self)
+        clear_cache_action.triggered.connect(self.clear_cache)
+        self.menu.addAction(clear_cache_action)
+
+        # Ayırıcı çizgi
+        self.menu.addSeparator()
+
         # Çıkış butonu
         exit_action = QAction("Çıkış", self)
         exit_action.triggered.connect(self.quit)
@@ -210,6 +208,7 @@ class GarantiTrayApp(QtCore.QObject):
         # Arayüz seçimi (varsayılan: modern)
         self.current_interface = "modern"
         self.current_popup = None
+        self.history_dialog = None  # Geçmiş sorgular dialog'u için
 
         # Clipboard izleme
         self.clipboard = QApplication.clipboard()
@@ -221,14 +220,13 @@ class GarantiTrayApp(QtCore.QObject):
         try:
             old_interface = self.current_interface
             self.current_interface = interface_type
-            log_info(f"Arayüz değiştirildi: {old_interface} → {interface_type}")
 
             # Mevcut popup varsa kapat
             if self.current_popup and hasattr(self.current_popup, 'isVisible') and self.current_popup.isVisible():
                 self.current_popup.close_popup()
 
-        except Exception as e:
-            log_exc(f"Arayüz değiştirme hatası: {e}")
+        except:
+            pass
 
     def show_popup(self, title: str, info: str, copy_model_payload: str = None, copy_date_payload: str = None, status_color: str = "red", serial: str = None):
         """Seçili arayüze göre popup göster"""
@@ -246,15 +244,66 @@ class GarantiTrayApp(QtCore.QObject):
             # Popup içeriğini ayarla
             self.current_popup.set_content(title, info, copy_model_payload, copy_date_payload, status_color, serial)
 
+        except:
+            pass
+
+    def show_history(self):
+        """Geçmiş sorgular için gerçek verilerle dialog göster"""
+        try:
+            # Eğer zaten açık bir dialog varsa kapat
+            if self.history_dialog and self.history_dialog.isVisible():
+                self.history_dialog.close()
+
+            # HistoryPopup'u oluştur ve verileri yükle
+            self.history_dialog = HistoryPopup()
+            self.history_dialog.load_history()
+
+            # Ekranın ortasında göster
+            self.history_dialog.show_at_center()
+
+        except:
+            pass
+
+    def clear_cache(self):
+        """Cache dosyasını temizle - onay ile"""
+        try:
+            if not os.path.exists(CACHE_FILE):
+                # Cache dosyası zaten yok
+                self.show_popup("BİLGİ", "Cache dosyası bulunamadı.", status_color="blue")
+                return
+
+            # Onay mesajı göster
+            reply = QtWidgets.QMessageBox.question(
+                None,
+                "Cache Temizleme Onayı",
+                "Cache dosyasını temizlemek istediğinizden emin misiniz?\n\n"
+                "Bu işlem tüm geçmiş sorguları silecektir ve geri alınamaz.",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No
+            )
+
+            if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
+
+            # Cache dosyasını sil
+            os.remove(CACHE_FILE)
+
+            # Device notes dosyasını da sil (varsa)
+            notes_file = "device_notes.json"
+            if os.path.exists(notes_file):
+                os.remove(notes_file)
+
+            # Başarılı mesajı göster
+            self.show_popup("BAŞARILI", "Cache ve cihaz notları başarıyla temizlendi.", status_color="green")
+
         except Exception as e:
-            log_exc(f"Popup gösterme hatası: {e}")
+            self.show_popup("HATA", f"Cache temizlenirken hata oluştu: {str(e)}", status_color="red")
 
     def quit(self):
         try:
-            log_info("Uygulama kapatılıyor.")
             QtCore.QCoreApplication.quit()
-        except Exception as e:
-            log_exc("Quit error: " + str(e))
+        except:
+            pass
 
     def on_clipboard_change(self):
         try:
@@ -271,10 +320,9 @@ class GarantiTrayApp(QtCore.QObject):
             if token == self._last_serial:
                 return
             self._last_serial = token
-            log_info(f"Detected serial in clipboard: {token}")
             QtCore.QTimer.singleShot(100, lambda: self.check_warranty(token))
-        except Exception as e:
-            log_exc("Clipboard handler error: " + str(e))
+        except:
+            pass
 
     def check_warranty(self, serial: str):
         try:
@@ -293,7 +341,6 @@ class GarantiTrayApp(QtCore.QObject):
                     result.get('status_color', 'red'),
                     serial
                 )
-                log_info(f"Cache'den sonuç gösterildi: {serial}")
                 return
 
             # 1. Recci kontrolü
@@ -367,7 +414,6 @@ class GarantiTrayApp(QtCore.QObject):
                 }
                 add_to_cache(serial, result_data, cache_data)
 
-                log_info(f"Recci garantili: {serial} | {display_text}")
                 return
 
             if serial.startswith("RCCVBY") or serial.startswith("RCFVBY"):
@@ -383,7 +429,6 @@ class GarantiTrayApp(QtCore.QObject):
                 }
                 add_to_cache(serial, result_data, cache_data)
 
-                log_info(f"Özel seri garantili: {serial}")
                 return
 
             # 2. KVK API kontrolü
@@ -446,7 +491,6 @@ class GarantiTrayApp(QtCore.QObject):
                             }
                             add_to_cache(serial, result_data, cache_data)
 
-                            log_info(f"KVK garantili: {serial} | {formatted_copy_model_payload} | Bitiş: {warranty_end}")
                             return
                         else:
                             # KVK'da "no data found" var
@@ -503,7 +547,6 @@ class GarantiTrayApp(QtCore.QObject):
                 }
                 add_to_cache(serial, result_data, cache_data)
 
-                log_info(f"Garanti dışı: {serial} (Recci ve KVK'da bulunamadı)")
             else:
                 # Sadece Recci'de bulunamadı, KVK kontrol edilemedi
                 self.show_popup("", "Hiçbir sistemde garanti bilgisi bulunamadı.", copy_model_payload=None, copy_date_payload=None, status_color="red", serial=serial)
@@ -517,8 +560,6 @@ class GarantiTrayApp(QtCore.QObject):
                     'status_color': 'red'
                 }
                 add_to_cache(serial, result_data, cache_data)
-
-                log_info(f"Garanti dışı: {serial} (Recci'de bulunamadı, KVK kontrol edilemedi)")
 
         except requests.exceptions.Timeout:
             self.show_popup("HATA", "Sorgu zaman aşımına uğradı.", status_color="red", serial=serial)
@@ -563,8 +604,11 @@ class GarantiTrayApp(QtCore.QObject):
 def main():
     try:
         app = QApplication(sys.argv)
+
+        # Tray uygulaması için önemli: Son pencere kapatıldığında uygulama kapanmasın
+        app.setQuitOnLastWindowClosed(False)
+
         tray_app = GarantiTrayApp(app)
-        log_info("Garanti tepsi uygulaması başlatıldı.")
 
         # Başlangıç popup'ı göster
         start_popup = ModernPopup()
@@ -572,8 +616,7 @@ def main():
         QTimer.singleShot(1000, lambda: start_popup.show_at_bottom_right())
 
         sys.exit(app.exec())
-    except Exception as e:
-        log_exc("Uygulama fatal hata: " + str(e))
+    except:
         raise
 
 if __name__ == "__main__":
